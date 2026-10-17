@@ -24,12 +24,13 @@ def run_web():
 # 1. നിങ്ങളുടെ ക്രെഡൻഷ്യലുകൾ ഇവിടെ നൽകുക
 # ==========================================
 API_KEY = "44VJPrN7"
-CLIENT_ID = "J69899"
-PASSWORD = "1284"
+CLIENT_CODE = "J69899"
+PIN = "1284"
 TOTP_SECRET = "PM265VKABP26Z6AI3CYBH4FIUM"
 
-TELEGRAM_BOT_TOKEN = "8904699405:AAEg1dAgJV9wAOlKHaAXLG0HTsR3_aPnYDI"
-TELEGRAM_CHAT_ID = "590931716"              
+TELEGRAM_TOKEN = "8904699405:AAEg1dAgJV9wAOlKHaAXLG0HTsR3_aPnYDI"
+CHAT_ID = "590931716"
+              
 
 # ==========================================
 # 2. ടെലഗ്രാം അലേർട്ട് അയക്കുന്ന ഫംഗ്ഷൻ
