@@ -9,7 +9,6 @@ import pyotp
 from flask import Flask
 from SmartApi import SmartConnect
 
-# Render Web Service-ന് വേണ്ടിയുള്ള ഡമ്മി സെർവർ
 app = Flask(__name__)
 
 @app.route('/')
@@ -21,7 +20,7 @@ def run_web():
     app.run(host="0.0.0.0", port=port)
 
 # ==========================================
-# 1. നിങ്ങളുടെ ക്രെഡൻഷ്യലുകൾ ഇവിടെ നൽകുക
+# ക്രെഡൻഷ്യലുകൾ
 # ==========================================
 API_KEY = "44VJPrN7"
 CLIENT_CODE = "J69899"
@@ -30,11 +29,25 @@ TOTP_SECRET = "PM265VKABP26Z6AI3CYBH4FIUM"
 
 TELEGRAM_TOKEN = "8904699405:AAEg1dAgJV9wAOlKHaAXLG0HTsR3_aPnYDI"
 CHAT_ID = "590931716"
-              
 
-# ==========================================
-# 2. ടെലഗ്രാം അലേർട്ട് അയക്കുന്ന ഫംഗ്ഷൻ
-# ==========================================
+smartApi = None
+
+def get_smart_connect_session():
+    global smartApi
+    try:
+        smartApi = SmartConnect(API_KEY)
+        totp = pyotp.TOTP(TOTP_SECRET).now()
+        data = smartApi.generateSession(CLIENT_CODE, PIN, totp)
+        if data.get('status'):
+            print("Session generated successfully!")
+            return True
+        else:
+            print(f"Session failed: {data}")
+            return False
+    except Exception as e:
+        print(f"Login Exception: {e}")
+        return False
+
 def send_telegram_alert(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
@@ -47,9 +60,6 @@ def send_telegram_alert(message):
     except Exception as e:
         print(f"Telegram Error: {e}")
 
-# ==========================================
-# 3. ഓട്ടോമാറ്റിക് കറന്റ് മന്ത് ടോക്കൺ കണ്ടെത്തൽ
-# ==========================================
 def get_current_natgas_token():
     try:
         url = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
@@ -71,9 +81,6 @@ def get_current_natgas_token():
         print(f"Token Fetch Error: {e}")
         return None, None
 
-# ==========================================
-# 4. ഇൻഡിക്കേറ്ററുകൾ കാൽക്കുലേറ്റ് ചെയ്യുന്നു
-# ==========================================
 def calculate_indicators(df):
     df['EMA_20'] = df['close'].ewm(span=20, adjust=False).mean()
 
@@ -106,94 +113,90 @@ def calculate_cpr(prev_high, prev_low, prev_close):
     bottom_cpr = min(tc, bc)
     return pivot, top_cpr, bottom_cpr
 
-# ==========================================
-# 5. ബോട്ട് റൺ ചെയ്യുന്ന ലൂപ്പ്
-# ==========================================
 def run_trading_bot():
-    print("Connecting to Angel One...")
-    try:
-        smartApi = SmartConnect(API_KEY)
-        totp = pyotp.TOTP(TOTP_SECRET).now()
-        smartApi.generateSession(CLIENT_CODE, PIN, totp)
-        print("Login Successful!")
+    print("Initializing Bot...")
+    get_smart_connect_session()
 
-        token, symbol = get_current_natgas_token()
-        last_signal = None
+    token, symbol = get_current_natgas_token()
+    last_signal = None
 
-        send_telegram_alert(f"🤖 *Natural Gas Bot Activated*\nMonitoring: `{symbol}`")
+    send_telegram_alert(f"🤖 *Natural Gas Bot Activated*\nMonitoring: `{symbol}`")
 
-        while True:
-            try:
-                now = datetime.datetime.now()
-                today_str = now.strftime("%Y-%m-%d")
+    while True:
+        try:
+            now = datetime.datetime.now()
+            today_str = now.strftime("%Y-%m-%d")
 
-                historicParam = {
-                    "exchange": "MCX",
-                    "symboltoken": token,
-                    "interval": "FIVE_MINUTE",
-                    "fromdate": f"{today_str} 09:00",
-                    "todate": f"{today_str} 23:30"
-                }
-                res = smartApi.getCandleData(historicParam)
+            historicParam = {
+                "exchange": "MCX",
+                "symboltoken": token,
+                "interval": "FIVE_MINUTE",
+                "fromdate": f"{today_str} 09:00",
+                "todate": f"{today_str} 23:30"
+            }
+            
+            res = smartApi.getCandleData(historicParam)
 
-                if res and res.get('data'):
-                    df = pd.DataFrame(res['data'], columns=['time', 'open', 'high', 'low', 'close', 'volume'])
-                    df = calculate_indicators(df)
-                    
-                    last_row = df.iloc[-1]
-                    close = last_row['close']
-                    vwap = last_row['VWAP']
-                    ema = last_row['EMA_20']
-                    supertrend = last_row['ST_Trend']
+            # സെഷൻ എക്സ്പയർ ആയാൽ തനിയെ റീലോഗിൻ ചെയ്യുന്നു
+            if not res or res.get('status') is False:
+                print("Session might be expired. Re-logging in...")
+                if get_smart_connect_session():
+                    res = smartApi.getCandleData(historicParam)
 
-                    day_high = df['high'].max()
-                    day_low = df['low'].min()
-                    day_close = close
-                    pivot, top_cpr, bottom_cpr = calculate_cpr(day_high, day_low, day_close)
+            if res and res.get('data'):
+                df = pd.DataFrame(res['data'], columns=['time', 'open', 'high', 'low', 'close', 'volume'])
+                df = calculate_indicators(df)
+                
+                last_row = df.iloc[-1]
+                close = last_row['close']
+                vwap = last_row['VWAP']
+                ema = last_row['EMA_20']
+                supertrend = last_row['ST_Trend']
 
-                    atm_strike = int(round(close / 5.0) * 5)
+                day_high = df['high'].max()
+                day_low = df['low'].min()
+                day_close = close
+                pivot, top_cpr, bottom_cpr = calculate_cpr(day_high, day_low, day_close)
 
-                    if close > top_cpr and close > vwap and close > ema and supertrend == "BUY":
-                        if last_signal != "BUY":
-                            msg = (
-                                f"🚀 *NATURAL GAS BUY SIGNAL (CE)*\n\n"
-                                f"🔹 *Contract:* {symbol}\n"
-                                f"🔹 *Price:* {close}\n"
-                                f"🔹 *VWAP:* {round(vwap, 2)} | *EMA20:* {round(ema, 2)}\n"
-                                f"🔹 *CPR:* Above Top CPR ({round(top_cpr, 2)})\n"
-                                f"🔹 *Supertrend:* Bullish (Green)\n\n"
-                                f"🎯 *Recommended Strike:* `{atm_strike} CE`\n"
-                                f"🛑 *Stop Loss:* 20 EMA ({round(ema, 2)})"
-                            )
-                            send_telegram_alert(msg)
-                            last_signal = "BUY"
+                atm_strike = int(round(close / 5.0) * 5)
 
-                    elif close < bottom_cpr and close < vwap and close < ema and supertrend == "SELL":
-                        if last_signal != "SELL":
-                            msg = (
-                                f"🔻 *NATURAL GAS SELL SIGNAL (PE)*\n\n"
-                                f"🔹 *Contract:* {symbol}\n"
-                                f"🔹 *Price:* {close}\n"
-                                f"🔹 *VWAP:* {round(vwap, 2)} | *EMA20:* {round(ema, 2)}\n"
-                                f"🔹 *CPR:* Below Bottom CPR ({round(bottom_cpr, 2)})\n"
-                                f"🔹 *Supertrend:* Bearish (Red)\n\n"
-                                f"🎯 *Recommended Strike:* `{atm_strike} PE`\n"
-                                f"🛑 *Stop Loss:* 20 EMA ({round(ema, 2)})"
-                            )
-                            send_telegram_alert(msg)
-                            last_signal = "SELL"
+                if close > top_cpr and close > vwap and close > ema and supertrend == "BUY":
+                    if last_signal != "BUY":
+                        msg = (
+                            f"🚀 *NATURAL GAS BUY SIGNAL (CE)*\n\n"
+                            f"🔹 *Contract:* {symbol}\n"
+                            f"🔹 *Price:* {close}\n"
+                            f"🔹 *VWAP:* {round(vwap, 2)} | *EMA20:* {round(ema, 2)}\n"
+                            f"🔹 *CPR:* Above Top CPR ({round(top_cpr, 2)})\n"
+                            f"🔹 *Supertrend:* Bullish (Green)\n\n"
+                            f"🎯 *Recommended Strike:* `{atm_strike} CE`\n"
+                            f"🛑 *Stop Loss:* 20 EMA ({round(ema, 2)})"
+                        )
+                        send_telegram_alert(msg)
+                        last_signal = "BUY"
 
-                time.sleep(300)
+                elif close < bottom_cpr and close < vwap and close < ema and supertrend == "SELL":
+                    if last_signal != "SELL":
+                        msg = (
+                            f"🔻 *NATURAL GAS SELL SIGNAL (PE)*\n\n"
+                            f"🔹 *Contract:* {symbol}\n"
+                            f"🔹 *Price:* {close}\n"
+                            f"🔹 *VWAP:* {round(vwap, 2)} | *EMA20:* {round(ema, 2)}\n"
+                            f"🔹 *CPR:* Below Bottom CPR ({round(bottom_cpr, 2)})\n"
+                            f"🔹 *Supertrend:* Bearish (Red)\n\n"
+                            f"🎯 *Recommended Strike:* `{atm_strike} PE`\n"
+                            f"🛑 *Stop Loss:* 20 EMA ({round(ema, 2)})"
+                        )
+                        send_telegram_alert(msg)
+                        last_signal = "SELL"
 
-            except Exception as e:
-                print(f"Loop Error: {e}")
-                time.sleep(60)
+            time.sleep(300)
 
-    except Exception as e:
-        print(f"Angel One Login Failed: {e}")
+        except Exception as e:
+            print(f"Loop Error: {e}")
+            time.sleep(60)
 
 if __name__ == "__main__":
-    # വെബ് സെർവർ ഒരു ത്രെഡിലും, ബോട്ട് മറ്റൊരു ത്രെഡിലും ഒരേസമയം റൺ ചെയ്യുന്നു
     t = threading.Thread(target=run_trading_bot)
     t.start()
     run_web()
