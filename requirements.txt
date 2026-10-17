@@ -4,4 +4,5 @@ numpy
 pyotp
 requests
 logzero
+websocket-client
 flask
