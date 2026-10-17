@@ -4,3 +4,4 @@ numpy
 pyotp
 requests
 logzero
+flask
